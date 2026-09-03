@@ -3,42 +3,125 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>HTML Test</title>
+    <title>塔防小游戏</title>
     <style>
+      * {
+        box-sizing: border-box;
+      }
+
       body {
         margin: 0;
         min-height: 100vh;
         display: grid;
         place-items: center;
         font-family: Arial, "Microsoft YaHei", sans-serif;
-        background: #f6f7f9;
-        color: #1f2937;
+        background: #f4f6fa;
+        color: #111827;
       }
 
       main {
-        width: min(90vw, 520px);
-        padding: 32px;
-        border: 1px solid #d9dee7;
-        border-radius: 8px;
-        background: #ffffff;
+        width: min(96vw, 760px);
+      }
+
+      .toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 12px;
       }
 
       h1 {
-        margin: 0 0 12px;
-        font-size: 28px;
+        margin: 0;
+        font-size: 24px;
       }
 
-      p {
-        margin: 0;
-        line-height: 1.7;
+      button {
+        min-width: 112px;
+        min-height: 40px;
+        border: 0;
+        border-radius: 8px;
+        background: #2563eb;
+        color: #ffffff;
+        font-size: 15px;
+        cursor: pointer;
+      }
+
+      button:disabled {
+        background: #9ca3af;
+        cursor: not-allowed;
+      }
+
+      canvas {
+        width: 100%;
+        aspect-ratio: 12 / 7;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        background: #eef2f7;
+        display: block;
+      }
+
+      .tip {
+        margin: 10px 0 0;
+        color: #4b5563;
+        font-size: 14px;
       }
     </style>
   </head>
   <body>
-    <!-- 页面主体：用于朋友打开公网链接后确认页面部署成功 -->
     <main>
-      <h1>HTML 测试页</h1>
-      <p>如果你能看到这行文字，说明 GitHub Pages 已经可以访问这个静态页面。</p>
+      <div class="toolbar">
+        <h1>塔防小游戏</h1>
+        <button id="startButton" type="button">开始波次</button>
+      </div>
+      <canvas id="gameCanvas" width="720" height="420"></canvas>
+      <p class="tip">点击路线外空地放塔，每座塔 40 金币。守住 5 波即可胜利。</p>
     </main>
+
+    <script type="module">
+      import {
+        createGame,
+        drawGame,
+        placeTower,
+        startWave,
+        stepGame,
+      } from './game.js';
+
+      const canvas = document.querySelector('#gameCanvas');
+      const startButton = document.querySelector('#startButton');
+      const ctx = canvas.getContext('2d');
+      let game = createGame();
+      let lastTime = performance.now();
+
+      /** 画布点击事件：把屏幕坐标换算成游戏坐标后尝试建塔。 */
+      canvas.addEventListener('click', (event) => {
+        const rect = canvas.getBoundingClientRect();
+        const x = (event.clientX - rect.left) * (canvas.width / rect.width);
+        const y = (event.clientY - rect.top) * (canvas.height / rect.height);
+
+        try {
+          game = placeTower(game, x, y);
+        } catch (error) {
+          game = { ...game, message: error.message };
+        }
+      });
+
+      /** 开始按钮事件：触发下一波敌人，运行中和结束态由游戏内核控制。 */
+      startButton.addEventListener('click', () => {
+        game = startWave(game);
+      });
+
+      /** 主循环：固定使用状态快照推进游戏，避免界面直接改内部对象。 */
+      function loop(now) {
+        const deltaSeconds = Math.min(0.05, (now - lastTime) / 1000);
+        lastTime = now;
+        game = stepGame(game, deltaSeconds);
+        startButton.disabled = game.status === 'running' || game.status === 'lost' || game.status === 'won';
+        drawGame(ctx, game);
+        requestAnimationFrame(loop);
+      }
+
+      requestAnimationFrame(loop);
+    </script>
   </body>
 </html>
