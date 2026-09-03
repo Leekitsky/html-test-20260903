@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>塔防小游戏</title>
+    <title>同屏对战小游戏</title>
     <style>
       * {
         box-sizing: border-box;
@@ -24,7 +24,7 @@
       }
 
       main {
-        width: min(100%, 760px);
+        width: min(100%, 800px);
       }
 
       .toolbar {
@@ -40,21 +40,10 @@
         font-size: 24px;
       }
 
-      button {
-        min-width: 112px;
-        min-height: 40px;
-        border: 0;
-        border-radius: 8px;
-        background: #2563eb;
-        color: #ffffff;
-        font-size: 15px;
-        cursor: pointer;
-        touch-action: manipulation;
-      }
-
-      button:disabled {
-        background: #9ca3af;
-        cursor: not-allowed;
+      .status {
+        margin: 0;
+        color: #4b5563;
+        font-size: 14px;
       }
 
       canvas {
@@ -67,6 +56,52 @@
         touch-action: manipulation;
       }
 
+      .controls {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        margin-top: 12px;
+      }
+
+      .player {
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 10px;
+        background: #ffffff;
+      }
+
+      .player h2 {
+        margin: 0 0 8px;
+        font-size: 16px;
+      }
+
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+      }
+
+      button {
+        min-height: 44px;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        background: #ffffff;
+        color: #111827;
+        font-size: 14px;
+        cursor: pointer;
+        touch-action: manipulation;
+      }
+
+      button.active-blue {
+        border-color: #2563eb;
+        background: #dbeafe;
+      }
+
+      button.active-red {
+        border-color: #dc2626;
+        background: #fee2e2;
+      }
+
       .tip {
         margin: 10px 0 0;
         color: #4b5563;
@@ -74,24 +109,24 @@
         line-height: 1.6;
       }
 
-      @media (max-width: 520px) {
+      @media (max-width: 560px) {
         body {
           align-items: start;
           padding-top: max(12px, env(safe-area-inset-top));
         }
 
         .toolbar {
-          align-items: stretch;
+          align-items: flex-start;
           flex-direction: column;
-          gap: 8px;
+          gap: 6px;
         }
 
         h1 {
           font-size: 22px;
         }
 
-        button {
-          width: 100%;
+        .controls {
+          grid-template-columns: 1fr;
         }
 
         canvas {
@@ -103,56 +138,94 @@
   <body>
     <main>
       <div class="toolbar">
-        <h1>塔防小游戏</h1>
-        <button id="startButton" type="button">开始波次</button>
+        <h1>同屏对战小游戏</h1>
+        <p id="statusText" class="status">蓝方左半场，红方右半场。</p>
       </div>
       <canvas id="gameCanvas" width="720" height="420"></canvas>
-      <p class="tip">点击路线外空地放塔，每座塔 40 金币。守住 5 波即可胜利。</p>
+      <section class="controls" aria-label="双方出兵卡牌">
+        <div class="player">
+          <h2>蓝方</h2>
+          <div id="blueCards" class="cards"></div>
+        </div>
+        <div class="player">
+          <h2>红方</h2>
+          <div id="redCards" class="cards"></div>
+        </div>
+      </section>
+      <p class="tip">先点卡牌，再点己方半场出兵。双方单位会自动推进、攻击单位和基地。</p>
     </main>
 
     <script type="module">
       import {
+        CARDS,
         createGame,
         drawGame,
-        placeTower,
-        startWave,
+        getCardOrder,
+        selectCard,
+        spawnUnit,
         stepGame,
       } from './game.js';
 
       const canvas = document.querySelector('#gameCanvas');
-      const startButton = document.querySelector('#startButton');
+      const statusText = document.querySelector('#statusText');
       const ctx = canvas.getContext('2d');
       let game = createGame();
       let lastTime = performance.now();
 
-      /** 画布点击事件：把屏幕坐标换算成游戏坐标后尝试建塔。 */
+      /** 卡牌按钮事件：选择对应阵营下次出兵单位。 */
+      function bindCards(team, containerId) {
+        const container = document.querySelector(containerId);
+        container.replaceChildren(...getCardOrder().map((cardId) => {
+          const card = CARDS[cardId];
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.dataset.team = team;
+          button.dataset.card = cardId;
+          button.textContent = `${card.name} ${card.cost}`;
+          button.addEventListener('click', () => {
+            game = selectCard(game, team, cardId);
+            renderCards();
+          });
+          return button;
+        }));
+      }
+
+      /** 同步卡牌选中态，让双方玩家知道当前将派出哪个单位。 */
+      function renderCards() {
+        document.querySelectorAll('button[data-team]').forEach((button) => {
+          const team = button.dataset.team;
+          const isActive = game.players[team].selectedCard === button.dataset.card;
+          button.classList.toggle(`active-${team}`, isActive);
+        });
+      }
+
+      /** 画布点击事件：按点击所在半场决定蓝方或红方出兵。 */
       canvas.addEventListener('click', (event) => {
         const rect = canvas.getBoundingClientRect();
         const x = (event.clientX - rect.left) * (canvas.width / rect.width);
         const y = (event.clientY - rect.top) * (canvas.height / rect.height);
+        const team = x < canvas.width / 2 ? 'blue' : 'red';
 
         try {
-          game = placeTower(game, x, y);
+          game = spawnUnit(game, team, x, y);
         } catch (error) {
           game = { ...game, message: error.message };
         }
       });
 
-      /** 开始按钮事件：触发下一波敌人，运行中和结束态由游戏内核控制。 */
-      startButton.addEventListener('click', () => {
-        game = startWave(game);
-      });
-
-      /** 主循环：固定使用状态快照推进游戏，避免界面直接改内部对象。 */
+      /** 主循环：推进对战状态，刷新画面与顶部状态。 */
       function loop(now) {
         const deltaSeconds = Math.min(0.05, (now - lastTime) / 1000);
         lastTime = now;
         game = stepGame(game, deltaSeconds);
-        startButton.disabled = game.status === 'running' || game.status === 'lost' || game.status === 'won';
+        statusText.textContent = game.message;
         drawGame(ctx, game);
         requestAnimationFrame(loop);
       }
 
+      bindCards('blue', '#blueCards');
+      bindCards('red', '#redCards');
+      renderCards();
       requestAnimationFrame(loop);
     </script>
   </body>

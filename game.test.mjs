@@ -1,59 +1,86 @@
 import assert from 'node:assert/strict';
 import {
+  CARDS,
   createGame,
   drawGame,
-  placeTower,
-  spawnEnemy,
-  startWave,
+  selectCard,
+  spawnUnit,
   stepGame,
 } from './game.js';
 
 const game = createGame();
 
-assert.equal(game.gold, 120);
-assert.equal(game.lives, 10);
-assert.equal(game.wave, 1);
+assert.equal(game.players.blue.baseHp, 1200);
+assert.equal(game.players.red.baseHp, 1200);
+assert.equal(game.players.blue.energy, 5);
+assert.equal(game.players.red.energy, 5);
+assert.equal(game.status, 'playing');
 
-const withTower = placeTower(game, 260, 180);
-assert.equal(withTower.towers.length, 1);
-assert.equal(withTower.gold, 80);
-assert.equal(game.towers.length, 0);
+const selected = selectCard(game, 'blue', 'archer');
+assert.equal(selected.players.blue.selectedCard, 'archer');
+assert.equal(game.players.blue.selectedCard, 'knight');
 
-assert.throws(() => placeTower(withTower, 90, 220), /路线/);
-assert.throws(() => placeTower({ ...withTower, gold: 10 }, 420, 180), /金币/);
+const withBlueUnit = spawnUnit(selected, 'blue', 170, 155);
+assert.equal(withBlueUnit.players.blue.energy, 3);
+assert.equal(withBlueUnit.units.length, 1);
+assert.equal(withBlueUnit.units[0].team, 'blue');
 
-const withEnemy = spawnEnemy(withTower);
-const afterFight = Array.from({ length: 70 }).reduce(
+assert.throws(() => spawnUnit(withBlueUnit, 'blue', 510, 155), /己方半场/);
+assert.throws(() => spawnUnit({ ...selected, players: {
+  ...selected.players,
+  blue: { ...selected.players.blue, energy: 1 },
+} }, 'blue', 170, 155), /能量不足/);
+
+const withRedUnit = spawnUnit(selectCard(withBlueUnit, 'red', 'archer'), 'red', 550, 260);
+assert.equal(withRedUnit.players.red.energy, 3);
+assert.equal(withRedUnit.units.length, 2);
+
+const afterEnergy = stepGame(withRedUnit, 2);
+assert.ok(afterEnergy.players.blue.energy > withRedUnit.players.blue.energy);
+assert.ok(afterEnergy.players.red.energy > withRedUnit.players.red.energy);
+
+const afterBattle = Array.from({ length: 120 }).reduce(
   (state) => stepGame(state, 0.1),
-  withEnemy,
+  withRedUnit,
 );
+assert.ok(afterBattle.units.length < withRedUnit.units.length || afterBattle.effects.length > 0);
 
-assert.equal(afterFight.enemies.length, 0);
-assert.equal(afterFight.gold, 90);
+const nearBase = {
+  ...createGame(),
+  units: [{
+    id: 1,
+    team: 'blue',
+    cardId: 'giant',
+    x: 635,
+    y: 210,
+    hp: CARDS.giant.hp,
+    maxHp: CARDS.giant.hp,
+    damage: CARDS.giant.damage,
+    range: CARDS.giant.range,
+    speed: CARDS.giant.speed,
+    cooldown: 0,
+  }],
+  nextUnitId: 2,
+};
+const baseHit = stepGame(nearBase, 0.2);
+assert.ok(baseHit.players.red.baseHp < 1200);
 
-const leaked = Array.from({ length: 400 }).reduce(
-  (state) => stepGame(state, 0.1),
-  spawnEnemy(createGame()),
-);
-
-assert.equal(leaked.lives, 9);
-assert.equal(leaked.enemies.length, 0);
-
-const running = startWave(createGame());
-assert.equal(running.status, 'running');
-assert.equal(running.spawnLeft, 8);
-
-const won = { ...createGame(), wave: 5, spawnLeft: 0, enemies: [], status: 'running' };
-assert.equal(stepGame(won, 0.1).status, 'won');
+const lost = {
+  ...nearBase,
+  players: {
+    ...nearBase.players,
+    red: { ...nearBase.players.red, baseHp: 10 },
+  },
+};
+assert.equal(stepGame(lost, 0.2).status, 'blue-win');
 
 const calls = [];
 const ctx = {
   fillStyle: '',
   font: '',
-  lineCap: '',
-  lineJoin: '',
   lineWidth: 0,
   strokeStyle: '',
+  textAlign: '',
   arc: (...args) => calls.push(['arc', ...args]),
   beginPath: () => calls.push(['beginPath']),
   clearRect: (...args) => calls.push(['clearRect', ...args]),
@@ -63,11 +90,12 @@ const ctx = {
   lineTo: (...args) => calls.push(['lineTo', ...args]),
   moveTo: (...args) => calls.push(['moveTo', ...args]),
   stroke: () => calls.push(['stroke']),
+  strokeRect: (...args) => calls.push(['strokeRect', ...args]),
 };
 
-drawGame(ctx, spawnEnemy(withTower));
+drawGame(ctx, withRedUnit);
 assert.ok(calls.some((call) => call[0] === 'clearRect'));
 assert.ok(calls.some((call) => call[0] === 'fillText'));
 assert.ok(calls.some((call) => call[0] === 'arc'));
 
-console.log('tower-defense tests passed');
+console.log('same-screen battle tests passed');

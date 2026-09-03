@@ -1,336 +1,342 @@
 export const WIDTH = 720;
 export const HEIGHT = 420;
 
-export const PATH = [
-  { x: 40, y: 220 },
-  { x: 180, y: 220 },
-  { x: 180, y: 90 },
-  { x: 380, y: 90 },
-  { x: 380, y: 300 },
-  { x: 660, y: 300 },
-];
+export const CARDS = {
+  knight: { name: '骑士', cost: 3, hp: 260, damage: 32, range: 28, speed: 42, cooldown: 0.75 },
+  archer: { name: '弓手', cost: 2, hp: 130, damage: 22, range: 115, speed: 36, cooldown: 0.9 },
+  giant: { name: '巨人', cost: 5, hp: 520, damage: 48, range: 34, speed: 24, cooldown: 1.1 },
+};
 
-const TOWER_COST = 40;
-const TOWER_RANGE = 120;
-const TOWER_DAMAGE = 22;
-const TOWER_COOLDOWN = 0.45;
-const ENEMY_HEALTH = 70;
-const ENEMY_SPEED = 48;
-const KILL_REWARD = 10;
-const HIT_RADIUS = 30;
+const CARD_ORDER = ['knight', 'archer', 'giant'];
+const BASE_HP = 1200;
+const MAX_ENERGY = 10;
+const ENERGY_SPEED = 0.7;
+const BASE_RANGE = 44;
+const UNIT_RADIUS = 14;
+const ARENA_TOP = 78;
+const ARENA_BOTTOM = 342;
+const BLUE_BASE = { x: 58, y: 210 };
+const RED_BASE = { x: 662, y: 210 };
 
-/** 创建塔防游戏初始状态。 */
+/** 创建同屏双人对战初始状态。 */
 export function createGame() {
   return {
-    gold: 120,
-    lives: 10,
-    wave: 1,
-    selected: null,
-    enemies: [],
-    towers: [],
-    shots: [],
-    spawnTimer: 0,
-    spawnLeft: 0,
-    nextEnemyId: 1,
-    status: 'ready',
-    message: '点击开始波次',
+    status: 'playing',
+    message: '双方选卡后点击己方半场出兵',
+    players: {
+      blue: createPlayer('blue', '蓝方', 'knight'),
+      red: createPlayer('red', '红方', 'knight'),
+    },
+    units: [],
+    effects: [],
+    nextUnitId: 1,
   };
 }
 
-/** 判断坐标是否落在敌人路线附近，路线附近禁止放塔。 */
-export function isOnPath(x, y) {
-  return PATH.some((point, index) => {
-    const next = PATH[index + 1];
-    if (!next) return false;
-
-    const dx = next.x - point.x;
-    const dy = next.y - point.y;
-    const lengthSq = dx * dx + dy * dy;
-    const t = Math.max(0, Math.min(1, ((x - point.x) * dx + (y - point.y) * dy) / lengthSq));
-    const px = point.x + t * dx;
-    const py = point.y + t * dy;
-    return Math.hypot(x - px, y - py) < HIT_RADIUS;
-  });
-}
-
-/** 在指定坐标放置防御塔，返回不可变的新游戏状态。 */
-export function placeTower(game, x, y) {
-  if (game.status === 'lost' || game.status === 'won') throw new Error('游戏已结束');
-  if (game.gold < TOWER_COST) throw new Error('金币不足');
-  if (isOnPath(x, y)) throw new Error('路线附近不能放塔');
-  if (game.towers.some((tower) => Math.hypot(tower.x - x, tower.y - y) < 44)) {
-    throw new Error('防御塔太近');
-  }
+/** 选择玩家下一次要派出的卡牌。 */
+export function selectCard(game, team, cardId) {
+  validatePlayer(game, team);
+  if (!CARDS[cardId]) throw new Error('未知卡牌');
 
   return {
     ...game,
-    gold: game.gold - TOWER_COST,
-    message: '防御塔已建造',
-    towers: [
-      ...game.towers,
-      { x, y, range: TOWER_RANGE, damage: TOWER_DAMAGE, cooldown: 0 },
-    ],
+    message: `${game.players[team].name} 已选择 ${CARDS[cardId].name}`,
+    players: {
+      ...game.players,
+      [team]: { ...game.players[team], selectedCard: cardId },
+    },
   };
 }
 
-/** 生成一个敌人，敌人从路线起点向终点移动。 */
-export function spawnEnemy(game) {
-  const start = PATH[0];
+/** 在玩家己方半场生成单位，并扣除对应能量。 */
+export function spawnUnit(game, team, x, y) {
+  validatePlayer(game, team);
+  if (game.status !== 'playing') throw new Error('游戏已结束');
+  if (!isOwnHalf(team, x) || y < ARENA_TOP || y > ARENA_BOTTOM) throw new Error('只能在己方半场出兵');
+
+  const player = game.players[team];
+  const card = CARDS[player.selectedCard];
+  if (player.energy < card.cost) throw new Error('能量不足');
+
   return {
     ...game,
-    nextEnemyId: game.nextEnemyId + 1,
-    enemies: [
-      ...game.enemies,
+    message: `${player.name} 派出 ${card.name}`,
+    nextUnitId: game.nextUnitId + 1,
+    players: {
+      ...game.players,
+      [team]: { ...player, energy: player.energy - card.cost },
+    },
+    units: [
+      ...game.units,
       {
-        id: game.nextEnemyId,
-        x: start.x,
-        y: start.y,
-        hp: ENEMY_HEALTH + game.wave * 8,
-        maxHp: ENEMY_HEALTH + game.wave * 8,
-        speed: ENEMY_SPEED + game.wave * 3,
-        segment: 0,
-        progress: 0,
+        id: game.nextUnitId,
+        team,
+        cardId: player.selectedCard,
+        x,
+        y,
+        hp: card.hp,
+        maxHp: card.hp,
+        damage: card.damage,
+        range: card.range,
+        speed: card.speed,
+        cooldown: 0,
       },
     ],
   };
 }
 
-/** 开始下一波敌人。 */
-export function startWave(game) {
-  if (game.status === 'running') return game;
-  if (game.status === 'lost' || game.status === 'won') return game;
-
-  return {
-    ...game,
-    status: 'running',
-    spawnLeft: 6 + game.wave * 2,
-    spawnTimer: 0,
-    message: `第 ${game.wave} 波进攻中`,
-  };
-}
-
-/** 推进一帧游戏状态：生成敌人、移动敌人、塔攻击、结算胜负。 */
+/** 推进一帧对战：回能量、单位寻敌、攻击、移动、基地胜负结算。 */
 export function stepGame(game, deltaSeconds) {
-  if (game.status === 'lost' || game.status === 'won') return game;
+  if (game.status !== 'playing') return game;
 
-  const spawned = tickSpawn(game, deltaSeconds);
-  const moved = moveEnemies(spawned, deltaSeconds);
-  const attacked = attackEnemies(moved, deltaSeconds);
-  return settleWave(attacked);
+  const energized = recoverEnergy(game, deltaSeconds);
+  const battled = updateUnits(energized, deltaSeconds);
+  return settleBattle(battled);
 }
 
-/** 绘制当前游戏画面。 */
+/** 绘制当前同屏对战画面。 */
 export function drawGame(ctx, game) {
   ctx.clearRect(0, 0, WIDTH, HEIGHT);
-  drawBackground(ctx);
-  drawPath(ctx);
-  drawTowers(ctx, game);
-  drawEnemies(ctx, game);
-  drawShots(ctx, game);
+  drawArena(ctx);
+  drawBases(ctx, game);
+  drawUnits(ctx, game);
+  drawEffects(ctx, game);
   drawHud(ctx, game);
 }
 
-function tickSpawn(game, deltaSeconds) {
-  if (game.status !== 'running' || game.spawnLeft <= 0) return game;
-
-  const spawnTimer = game.spawnTimer - deltaSeconds;
-  if (spawnTimer > 0) return { ...game, spawnTimer };
-
-  return spawnEnemy({
-    ...game,
-    spawnLeft: game.spawnLeft - 1,
-    spawnTimer: 0.85,
-  });
+/** 获取界面卡牌固定顺序。 */
+export function getCardOrder() {
+  return CARD_ORDER;
 }
 
-function moveEnemies(game, deltaSeconds) {
-  let lives = game.lives;
-  const enemies = [];
+function createPlayer(team, name, selectedCard) {
+  return {
+    team,
+    name,
+    baseHp: BASE_HP,
+    energy: 5,
+    selectedCard,
+  };
+}
 
-  for (const enemy of game.enemies) {
-    const moved = moveEnemy(enemy, deltaSeconds);
-    if (moved.segment >= PATH.length - 1) {
-      lives -= 1;
+function validatePlayer(game, team) {
+  if (!game.players[team]) throw new Error('未知玩家');
+}
+
+function isOwnHalf(team, x) {
+  return team === 'blue' ? x < WIDTH / 2 : x > WIDTH / 2;
+}
+
+function recoverEnergy(game, deltaSeconds) {
+  return {
+    ...game,
+    players: {
+      blue: recoverPlayerEnergy(game.players.blue, deltaSeconds),
+      red: recoverPlayerEnergy(game.players.red, deltaSeconds),
+    },
+    effects: game.effects
+      .map((effect) => ({ ...effect, life: effect.life - deltaSeconds }))
+      .filter((effect) => effect.life > 0),
+  };
+}
+
+function recoverPlayerEnergy(player, deltaSeconds) {
+  return {
+    ...player,
+    energy: Math.min(MAX_ENERGY, player.energy + ENERGY_SPEED * deltaSeconds),
+  };
+}
+
+function updateUnits(game, deltaSeconds) {
+  let units = game.units.map((unit) => ({ ...unit, cooldown: Math.max(0, unit.cooldown - deltaSeconds) }));
+  let players = {
+    blue: { ...game.players.blue },
+    red: { ...game.players.red },
+  };
+  const effects = [...game.effects];
+
+  for (const unit of units) {
+    if (unit.hp <= 0) continue;
+
+    const enemies = units.filter((target) => target.team !== unit.team && target.hp > 0);
+    const target = findTarget(unit, enemies, players);
+
+    if (target.kind === 'unit' && target.distance <= unit.range + UNIT_RADIUS) {
+      const result = attackUnit(units, unit, target.id, effects);
+      units = result.units;
+    } else if (target.kind === 'base' && target.distance <= unit.range + BASE_RANGE) {
+      players = attackBase(players, unit, effects);
     } else {
-      enemies.push(moved);
+      units = moveUnit(units, unit, target, deltaSeconds);
     }
   }
 
   return {
     ...game,
-    lives,
-    enemies,
-    status: lives <= 0 ? 'lost' : game.status,
-    message: lives <= 0 ? '基地被攻破' : game.message,
+    players,
+    effects,
+    units: units.filter((unit) => unit.hp > 0),
   };
 }
 
-function moveEnemy(enemy, deltaSeconds) {
-  let segment = enemy.segment;
-  let x = enemy.x;
-  let y = enemy.y;
-  let distance = enemy.speed * deltaSeconds;
+function findTarget(unit, enemies, players) {
+  const enemyBase = unit.team === 'blue' ? RED_BASE : BLUE_BASE;
+  const enemyBaseHp = unit.team === 'blue' ? players.red.baseHp : players.blue.baseHp;
+  const enemyUnit = enemies
+    .map((enemy) => ({ ...enemy, distance: Math.hypot(enemy.x - unit.x, enemy.y - unit.y) }))
+    .sort((left, right) => left.distance - right.distance)[0];
 
-  while (distance > 0 && segment < PATH.length - 1) {
-    const from = { x, y };
-    const to = PATH[segment + 1];
-    const left = Math.hypot(to.x - from.x, to.y - from.y);
-
-    if (distance >= left) {
-      x = to.x;
-      y = to.y;
-      segment += 1;
-      distance -= left;
-    } else {
-      const ratio = distance / left;
-      x += (to.x - from.x) * ratio;
-      y += (to.y - from.y) * ratio;
-      distance = 0;
-    }
+  if (enemyUnit && enemyUnit.distance <= 140) {
+    return { kind: 'unit', id: enemyUnit.id, x: enemyUnit.x, y: enemyUnit.y, distance: enemyUnit.distance };
   }
 
-  return { ...enemy, x, y, segment };
+  return {
+    kind: 'base',
+    x: enemyBase.x,
+    y: enemyBase.y,
+    distance: enemyBaseHp > 0 ? Math.hypot(enemyBase.x - unit.x, enemyBase.y - unit.y) : 0,
+  };
 }
 
-function attackEnemies(game, deltaSeconds) {
-  let gold = game.gold;
-  let enemies = game.enemies.map((enemy) => ({ ...enemy }));
-  const shots = game.shots
-    .map((shot) => ({ ...shot, life: shot.life - deltaSeconds }))
-    .filter((shot) => shot.life > 0);
+function attackUnit(units, attacker, targetId, effects) {
+  if (attacker.cooldown > 0) return { units };
 
-  const towers = game.towers.map((tower) => {
-    const cooldown = Math.max(0, tower.cooldown - deltaSeconds);
-    if (cooldown > 0) return { ...tower, cooldown };
+  const target = units.find((unit) => unit.id === targetId);
+  effects.push({ fromX: attacker.x, fromY: attacker.y, toX: target.x, toY: target.y, life: 0.12 });
 
-    const target = enemies.find((enemy) => Math.hypot(enemy.x - tower.x, enemy.y - tower.y) <= tower.range);
-    if (!target) return { ...tower, cooldown };
+  return {
+    units: units.map((unit) => {
+      if (unit.id === attacker.id) return { ...unit, cooldown: CARDS[unit.cardId].cooldown };
+      if (unit.id === targetId) return { ...unit, hp: unit.hp - attacker.damage };
+      return unit;
+    }),
+  };
+}
 
-    enemies = enemies.map((enemy) => (
-      enemy.id === target.id ? { ...enemy, hp: enemy.hp - tower.damage } : enemy
-    ));
-    shots.push({ fromX: tower.x, fromY: tower.y, toX: target.x, toY: target.y, life: 0.12 });
+function attackBase(players, attacker, effects) {
+  if (attacker.cooldown > 0) return players;
 
-    return { ...tower, cooldown: TOWER_COOLDOWN };
-  });
+  const targetTeam = attacker.team === 'blue' ? 'red' : 'blue';
+  const base = targetTeam === 'red' ? RED_BASE : BLUE_BASE;
+  effects.push({ fromX: attacker.x, fromY: attacker.y, toX: base.x, toY: base.y, life: 0.12 });
 
-  const aliveEnemies = [];
-  for (const enemy of enemies) {
-    if (enemy.hp <= 0) {
-      gold += KILL_REWARD;
-    } else {
-      aliveEnemies.push(enemy);
-    }
+  return {
+    ...players,
+    [attacker.team]: players[attacker.team],
+    [targetTeam]: {
+      ...players[targetTeam],
+      baseHp: Math.max(0, players[targetTeam].baseHp - attacker.damage),
+    },
+  };
+}
+
+function moveUnit(units, unit, target, deltaSeconds) {
+  const dx = target.x - unit.x;
+  const dy = target.y - unit.y;
+  const distance = Math.hypot(dx, dy);
+  if (distance === 0) return units;
+
+  const step = Math.min(unit.speed * deltaSeconds, distance);
+  const nextX = unit.x + (dx / distance) * step;
+  const nextY = unit.y + (dy / distance) * step;
+
+  return units.map((item) => (
+    item.id === unit.id ? { ...item, x: nextX, y: clamp(nextY, ARENA_TOP, ARENA_BOTTOM) } : item
+  ));
+}
+
+function settleBattle(game) {
+  if (game.players.blue.baseHp <= 0) {
+    return { ...game, status: 'red-win', message: '红方胜利' };
   }
 
-  return { ...game, gold, enemies: aliveEnemies, towers, shots };
-}
-
-function settleWave(game) {
-  if (game.status === 'lost') return game;
-  if (game.status === 'running' && game.spawnLeft === 0 && game.enemies.length === 0) {
-    if (game.wave >= 5) {
-      return { ...game, status: 'won', message: '防守成功' };
-    }
-
-    return {
-      ...game,
-      wave: game.wave + 1,
-      status: 'ready',
-      gold: game.gold + 25,
-      message: '本波结束，点击开始下一波',
-    };
+  if (game.players.red.baseHp <= 0) {
+    return { ...game, status: 'blue-win', message: '蓝方胜利' };
   }
 
   return game;
 }
 
-function drawBackground(ctx) {
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function drawArena(ctx) {
   ctx.fillStyle = '#eef2f7';
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
-  ctx.strokeStyle = '#d6dde8';
-  ctx.lineWidth = 1;
+  ctx.fillStyle = '#dbeafe';
+  ctx.fillRect(0, ARENA_TOP, WIDTH / 2, ARENA_BOTTOM - ARENA_TOP);
+  ctx.fillStyle = '#fee2e2';
+  ctx.fillRect(WIDTH / 2, ARENA_TOP, WIDTH / 2, ARENA_BOTTOM - ARENA_TOP);
 
-  for (let x = 0; x <= WIDTH; x += 40) {
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, HEIGHT);
-    ctx.stroke();
-  }
-
-  for (let y = 0; y <= HEIGHT; y += 40) {
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(WIDTH, y);
-    ctx.stroke();
-  }
-}
-
-function drawPath(ctx) {
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  ctx.lineWidth = 54;
-  ctx.strokeStyle = '#d7b98b';
+  ctx.strokeStyle = '#94a3b8';
+  ctx.lineWidth = 2;
   ctx.beginPath();
-  PATH.forEach((point, index) => {
-    if (index === 0) ctx.moveTo(point.x, point.y);
-    else ctx.lineTo(point.x, point.y);
-  });
+  ctx.moveTo(WIDTH / 2, ARENA_TOP);
+  ctx.lineTo(WIDTH / 2, ARENA_BOTTOM);
   ctx.stroke();
 
-  ctx.lineWidth = 4;
-  ctx.strokeStyle = '#8f6c3c';
-  ctx.stroke();
+  ctx.fillStyle = '#cbd5e1';
+  ctx.fillRect(0, ARENA_TOP - 2, WIDTH, 4);
+  ctx.fillRect(0, ARENA_BOTTOM - 2, WIDTH, 4);
 }
 
-function drawTowers(ctx, game) {
-  for (const tower of game.towers) {
-    ctx.beginPath();
-    ctx.arc(tower.x, tower.y, tower.range, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(37, 99, 235, 0.08)';
-    ctx.fill();
+function drawBases(ctx, game) {
+  drawBase(ctx, BLUE_BASE, '#2563eb', game.players.blue.baseHp);
+  drawBase(ctx, RED_BASE, '#dc2626', game.players.red.baseHp);
+}
 
+function drawBase(ctx, base, color, hp) {
+  ctx.fillStyle = color;
+  ctx.fillRect(base.x - 30, base.y - 42, 60, 84);
+  ctx.strokeStyle = '#111827';
+  ctx.lineWidth = 3;
+  ctx.strokeRect(base.x - 30, base.y - 42, 60, 84);
+
+  ctx.fillStyle = '#111827';
+  ctx.fillRect(base.x - 38, base.y - 58, 76, 7);
+  ctx.fillStyle = '#22c55e';
+  ctx.fillRect(base.x - 38, base.y - 58, 76 * Math.max(0, hp / BASE_HP), 7);
+}
+
+function drawUnits(ctx, game) {
+  for (const unit of game.units) {
     ctx.beginPath();
-    ctx.arc(tower.x, tower.y, 18, 0, Math.PI * 2);
-    ctx.fillStyle = '#2563eb';
+    ctx.arc(unit.x, unit.y, UNIT_RADIUS, 0, Math.PI * 2);
+    ctx.fillStyle = unit.team === 'blue' ? '#1d4ed8' : '#b91c1c';
     ctx.fill();
-    ctx.strokeStyle = '#173d8f';
-    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#111827';
+    ctx.lineWidth = 2;
     ctx.stroke();
-  }
-}
-
-function drawEnemies(ctx, game) {
-  for (const enemy of game.enemies) {
-    ctx.beginPath();
-    ctx.arc(enemy.x, enemy.y, 15, 0, Math.PI * 2);
-    ctx.fillStyle = '#dc2626';
-    ctx.fill();
 
     ctx.fillStyle = '#111827';
-    ctx.fillRect(enemy.x - 18, enemy.y - 26, 36, 5);
+    ctx.fillRect(unit.x - 18, unit.y - 24, 36, 5);
     ctx.fillStyle = '#22c55e';
-    ctx.fillRect(enemy.x - 18, enemy.y - 26, 36 * Math.max(0, enemy.hp / enemy.maxHp), 5);
+    ctx.fillRect(unit.x - 18, unit.y - 24, 36 * Math.max(0, unit.hp / unit.maxHp), 5);
   }
 }
 
-function drawShots(ctx, game) {
+function drawEffects(ctx, game) {
   ctx.strokeStyle = '#f59e0b';
   ctx.lineWidth = 3;
 
-  for (const shot of game.shots) {
+  for (const effect of game.effects) {
     ctx.beginPath();
-    ctx.moveTo(shot.fromX, shot.fromY);
-    ctx.lineTo(shot.toX, shot.toY);
+    ctx.moveTo(effect.fromX, effect.fromY);
+    ctx.lineTo(effect.toX, effect.toY);
     ctx.stroke();
   }
 }
 
 function drawHud(ctx, game) {
   ctx.fillStyle = '#111827';
-  ctx.font = '18px Arial, Microsoft YaHei, sans-serif';
-  ctx.fillText(`金币 ${game.gold}`, 18, 30);
-  ctx.fillText(`生命 ${game.lives}`, 120, 30);
-  ctx.fillText(`波次 ${game.wave}/5`, 220, 30);
-  ctx.fillText(game.message, 330, 30);
+  ctx.font = '16px Arial, Microsoft YaHei, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(`蓝方 ${Math.ceil(game.players.blue.baseHp)} HP`, 16, 28);
+  ctx.fillText(`能量 ${game.players.blue.energy.toFixed(1)}`, 16, 52);
+  ctx.textAlign = 'right';
+  ctx.fillText(`红方 ${Math.ceil(game.players.red.baseHp)} HP`, WIDTH - 16, 28);
+  ctx.fillText(`能量 ${game.players.red.energy.toFixed(1)}`, WIDTH - 16, 52);
+  ctx.textAlign = 'center';
+  ctx.fillText(game.message, WIDTH / 2, 32);
 }
