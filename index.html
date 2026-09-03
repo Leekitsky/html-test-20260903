@@ -12,6 +12,10 @@
       body {
         margin: 0;
         min-height: 100vh;
+        min-height: 100dvh;
+        padding: 16px;
+        padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+          max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
         display: grid;
         place-items: center;
         font-family: Arial, "Microsoft YaHei", sans-serif;
@@ -20,7 +24,7 @@
       }
 
       main {
-        width: min(96vw, 760px);
+        width: min(100%, 760px);
       }
 
       .toolbar {
@@ -45,6 +49,7 @@
         color: #ffffff;
         font-size: 15px;
         cursor: pointer;
+        touch-action: manipulation;
       }
 
       button:disabled {
@@ -59,12 +64,39 @@
         border-radius: 8px;
         background: #eef2f7;
         display: block;
+        touch-action: manipulation;
       }
 
       .tip {
         margin: 10px 0 0;
         color: #4b5563;
         font-size: 14px;
+        line-height: 1.6;
+      }
+
+      @media (max-width: 520px) {
+        body {
+          align-items: start;
+          padding-top: max(12px, env(safe-area-inset-top));
+        }
+
+        .toolbar {
+          align-items: stretch;
+          flex-direction: column;
+          gap: 8px;
+        }
+
+        h1 {
+          font-size: 22px;
+        }
+
+        button {
+          width: 100%;
+        }
+
+        canvas {
+          border-radius: 6px;
+        }
       }
     </style>
   </head>
