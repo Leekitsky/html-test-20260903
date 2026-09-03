@@ -12,6 +12,10 @@ assert.match(html, /redCards/);
 assert.match(html, /@media \(max-width:\s*560px\)/);
 assert.match(html, /flex-direction:\s*column/);
 assert.match(html, /touch-action:\s*manipulation/);
+assert.match(html, /touch-action:\s*none/);
+assert.match(html, /overscroll-behavior:\s*none/);
+assert.match(html, /addEventListener\('pointerdown'/);
+assert.match(html, /event\.preventDefault\(\)/);
 assert.match(html, /aspect-ratio:\s*12 \/ 7/);
 
 console.log('responsive tests passed');

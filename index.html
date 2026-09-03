@@ -21,6 +21,8 @@
         font-family: Arial, "Microsoft YaHei", sans-serif;
         background: #f4f6fa;
         color: #111827;
+        overscroll-behavior: none;
+        user-select: none;
       }
 
       main {
@@ -53,7 +55,7 @@
         border-radius: 8px;
         background: #eef2f7;
         display: block;
-        touch-action: manipulation;
+        touch-action: none;
       }
 
       .controls {
@@ -90,6 +92,7 @@
         font-size: 14px;
         cursor: pointer;
         touch-action: manipulation;
+        -webkit-tap-highlight-color: transparent;
       }
 
       button.active-blue {
@@ -127,6 +130,15 @@
 
         .controls {
           grid-template-columns: 1fr;
+        }
+
+        .cards {
+          gap: 10px;
+        }
+
+        button {
+          min-height: 52px;
+          font-size: 15px;
         }
 
         canvas {
@@ -182,7 +194,8 @@
           button.dataset.team = team;
           button.dataset.card = cardId;
           button.textContent = `${card.name} ${card.cost}`;
-          button.addEventListener('click', () => {
+          button.addEventListener('pointerdown', (event) => {
+            event.preventDefault();
             game = selectCard(game, team, cardId);
             renderCards();
           });
@@ -200,7 +213,8 @@
       }
 
       /** 画布点击事件：按点击所在半场决定蓝方或红方出兵。 */
-      canvas.addEventListener('click', (event) => {
+      canvas.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
         const rect = canvas.getBoundingClientRect();
         const x = (event.clientX - rect.left) * (canvas.width / rect.width);
         const y = (event.clientY - rect.top) * (canvas.height / rect.height);
