@@ -48,6 +48,22 @@
         font-size: 14px;
       }
 
+      .online {
+        display: grid;
+        grid-template-columns: 2fr 1fr auto auto;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+
+      input {
+        min-height: 40px;
+        width: 100%;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 0 10px;
+        font: inherit;
+      }
+
       canvas {
         width: 100%;
         aspect-ratio: 12 / 7;
@@ -129,15 +145,28 @@
         }
 
         .controls {
+          grid-template-columns: 1fr 1fr;
+          gap: 8px;
+        }
+
+        .online {
           grid-template-columns: 1fr;
         }
 
+        .player {
+          padding: 8px;
+        }
+
+        .player h2 {
+          font-size: 14px;
+        }
+
         .cards {
-          gap: 10px;
+          gap: 6px;
         }
 
         button {
-          min-height: 52px;
+          min-height: 48px;
           font-size: 15px;
         }
 
@@ -153,6 +182,12 @@
         <h1>同屏对战小游戏</h1>
         <p id="statusText" class="status">蓝方左半场，红方右半场。</p>
       </div>
+      <section class="online" aria-label="双设备联机">
+        <input id="serverUrl" value="wss://teams-massachusetts-mirror-shipped.trycloudflare.com">
+        <input id="roomCode" placeholder="房间号">
+        <button id="createRoom" type="button">创建房间</button>
+        <button id="joinRoom" type="button">加入房间</button>
+      </section>
       <canvas id="gameCanvas" width="720" height="420"></canvas>
       <section class="controls" aria-label="双方出兵卡牌">
         <div class="player">
@@ -180,9 +215,56 @@
 
       const canvas = document.querySelector('#gameCanvas');
       const statusText = document.querySelector('#statusText');
+      const serverUrl = document.querySelector('#serverUrl');
+      const roomCode = document.querySelector('#roomCode');
+      const createRoom = document.querySelector('#createRoom');
+      const joinRoom = document.querySelector('#joinRoom');
       const ctx = canvas.getContext('2d');
       let game = createGame();
       let lastTime = performance.now();
+      let socket = null;
+      let onlineTeam = null;
+
+      /** 联机消息发送：只传玩家操作，游戏规则仍复用本地战斗内核。 */
+      function sendOnlineAction(action) {
+        if (!socket || socket.readyState !== WebSocket.OPEN || !onlineTeam) return;
+        socket.send(JSON.stringify({ type: 'action', action }));
+      }
+
+      /** 联机消息应用：收到对手操作后在本地执行同一选卡或出兵动作。 */
+      function applyOnlineAction(team, action) {
+        try {
+          if (action.kind === 'select') game = selectCard(game, team, action.cardId);
+          if (action.kind === 'spawn') game = spawnUnit(game, team, action.x, action.y);
+          renderCards();
+        } catch (error) {
+          game = { ...game, message: error.message };
+        }
+      }
+
+      /** 建立 WebSocket 房间连接，创建方固定蓝方，加入方固定红方。 */
+      function connectOnline(message) {
+        if (socket) socket.close();
+        socket = new WebSocket(serverUrl.value.trim());
+        socket.addEventListener('open', () => socket.send(JSON.stringify(message)));
+        socket.addEventListener('message', (event) => {
+          const data = JSON.parse(event.data);
+          if (data.type === 'created' || data.type === 'joined') {
+            onlineTeam = data.team;
+            roomCode.value = data.roomId;
+            game = createGame();
+            game = { ...game, message: `${data.team === 'blue' ? '蓝方' : '红方'} 已连接` };
+            renderCards();
+          }
+          if (data.type === 'peer-joined') game = { ...game, message: '对手已加入' };
+          if (data.type === 'peer-left') game = { ...game, message: '对手已离开' };
+          if (data.type === 'action') applyOnlineAction(data.team, data.action);
+          if (data.type === 'error') game = { ...game, message: data.message };
+        });
+        socket.addEventListener('error', () => {
+          game = { ...game, message: '服务器连接失败' };
+        });
+      }
 
       /** 卡牌按钮事件：选择对应阵营下次出兵单位。 */
       function bindCards(team, containerId) {
@@ -196,7 +278,9 @@
           button.textContent = `${card.name} ${card.cost}`;
           button.addEventListener('pointerdown', (event) => {
             event.preventDefault();
+            if (onlineTeam && onlineTeam !== team) return;
             game = selectCard(game, team, cardId);
+            sendOnlineAction({ kind: 'select', cardId });
             renderCards();
           });
           return button;
@@ -219,12 +303,25 @@
         const x = (event.clientX - rect.left) * (canvas.width / rect.width);
         const y = (event.clientY - rect.top) * (canvas.height / rect.height);
         const team = x < canvas.width / 2 ? 'blue' : 'red';
+        if (onlineTeam && onlineTeam !== team) return;
 
         try {
           game = spawnUnit(game, team, x, y);
+          sendOnlineAction({ kind: 'spawn', x, y });
         } catch (error) {
           game = { ...game, message: error.message };
         }
+      });
+
+      /** 创建/加入房间事件：让两台设备通过 Colab 中转同步操作。 */
+      createRoom.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        connectOnline({ type: 'create' });
+      });
+
+      joinRoom.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        connectOnline({ type: 'join', roomId: roomCode.value.trim() });
       });
 
       /** 主循环：推进对战状态，刷新画面与顶部状态。 */
